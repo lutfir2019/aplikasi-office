@@ -249,6 +249,18 @@ function Lighting({ theme }: { theme: 'dark' | 'light' }) {
   </>
 }
 
+function taskSummary(station: OfficeStation): string {
+  const tasks = station.tasks ?? []
+  if (tasks.length === 0) return ''
+  return ` ${tasks.length} task${tasks.length === 1 ? '' : 's'}: ${tasks.map((task) => `${task.title} (${task.status})`).join(', ')}.`
+}
+
+function StationTasks({ station }: { station: OfficeStation }) {
+  const tasks = station.tasks ?? []
+  if (tasks.length === 0) return null
+  return <span className="station-tasks" aria-hidden="true">{tasks.map((task) => <span key={task.id ?? task.title} className={`station-task status-${task.status.toLowerCase()}`}>{task.title}</span>)}</span>
+}
+
 export default function Office3D({ stations, onSelect }: { stations: OfficeStation[]; onSelect: (station: OfficeStation, trigger: HTMLElement | null) => void }) {
   const anchors = useRef(new Map<string, THREE.Object3D>())
   const labels = useRef(new Map<string, HTMLElement>())
@@ -282,7 +294,8 @@ export default function Office3D({ stations, onSelect }: { stations: OfficeStati
         const badge = officeStateBadge(station.state)
         const busy = ['Working', 'Reviewing', 'Collaborating'].includes(station.state)
         const idle = wandering(station)
-        return <button key={station.id} ref={register(labels, `agent-${station.id}`)} type="button" className={`agent-tag-3d state-${station.state.toLowerCase()}`} onClick={(event) => onSelect(station, event.currentTarget)} aria-label={`${station.name}. ${station.state}.${station.activity ? ` ${station.activity}.` : ''}${idle ? ` ${idle.placement.label ?? idle.stop.label}.` : ''} Open station details.`}>
+        return <button key={station.id} ref={register(labels, `agent-${station.id}`)} type="button" className={`agent-tag-3d state-${station.state.toLowerCase()}`} onClick={(event) => onSelect(station, event.currentTarget)} aria-label={`${station.name}. ${station.state}.${station.activity ? ` ${station.activity}.` : ''}.${taskSummary(station)}${idle ? ` ${idle.placement.label ?? idle.stop.label}.` : ''} Open station details.`}>
+          <StationTasks station={station}/>
           {busy && station.activity && <span className="speech speech-3d">{station.activity}</span>}
           {idle && <span className="speech speech-3d speech-idle">{idle.placement.label ?? idle.stop.label}</span>}
           <span className="agent-tag-row"><span className="pixel-station-name">{station.name}</span><span className={`badge ${badge.tone}`}>{station.state === 'Idle' ? 'Idle' : station.state}</span></span>

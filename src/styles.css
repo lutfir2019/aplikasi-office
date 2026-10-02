@@ -387,6 +387,10 @@ main { max-width: 1680px; }
 
 .speech { background: #fff7e8; border: 2px solid #17201e; border-radius: 4px; color: #1b2420; font: 9px ui-monospace, monospace; line-height: 1.3; max-width: 150px; order: 0; padding: 3px 6px; position: relative; text-align: center; animation: mc-bob 2.4s ease-in-out infinite; }
 .speech::after { border: 5px solid transparent; border-top-color: #17201e; bottom: -12px; content: ''; left: calc(50% - 5px); position: absolute; }
+.station-tasks { display: flex; flex-direction: column; gap: 2px; margin-bottom: 4px; max-width: 160px; order: -1; }
+.station-task { background: color-mix(in srgb, var(--accent) 18%, transparent); border-radius: 3px; color: var(--text); font: 8px/1.25 ui-monospace, monospace; padding: 1px 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.station-task.status-running { background: color-mix(in srgb, #3a86ff 22%, transparent); }
+.station-task.status-review { background: color-mix(in srgb, #f2b16b 22%, transparent); }
 .pixel-station-name { order: 1; } .pixel-station .badge { order: 2; } .neutral-label { order: 3; }
 .state-collaborating .pixel-character { animation: mc-talk .8s steps(2) infinite; }
 @keyframes mc-talk { 50% { transform: translateY(-2px); } }
@@ -615,6 +619,86 @@ aside.office-panel { background: color-mix(in srgb, var(--surface) 96%, transpar
 .detail-body .office-detail-grid { margin-top: 12px; }
 .embedded-folder .breadcrumb { margin-top: 0; }
 .embedded-folder .folder-browser { max-height: 60vh; }
+
+/* Prompt / Run Task tab in OfficeDetail */
+.prompt-profile-badge { align-items: center; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; display: flex; gap: 10px; margin-bottom: 12px; padding: 8px 12px; }
+.prompt-profile-badge .pixel-character { zoom: .45; }
+.prompt-profile-badge > span:nth-child(2) { display: grid; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.prompt-profile-badge strong { font-size: 13px; }
+.prompt-profile-badge small { color: var(--text-muted); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.prompt-profile-badge .badge { flex: none; font-size: 10px; }
+
+.prompt-textarea {
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  box-sizing: border-box;
+  color: var(--text);
+  display: block;
+  font: 14px/1.5 'DM Sans', sans-serif;
+  min-height: 96px;
+  padding: 10px 12px;
+  resize: vertical;
+  transition: border-color .15s ease;
+  width: 100%;
+}
+.prompt-textarea:hover:not(:disabled) { border-color: var(--text-dim); }
+.prompt-textarea:focus-visible { border-color: var(--accent); outline: 2px solid var(--accent); outline-offset: 1px; }
+.prompt-textarea:disabled { cursor: not-allowed; opacity: .7; }
+.prompt-textarea.textarea-error { border-color: var(--c-d9695a); }
+
+.prompt-counter { color: var(--text-dim); font: 11px 'DM Mono', monospace; letter-spacing: .04em; margin-top: 6px; text-align: right; }
+.prompt-counter.counter-warn { color: var(--accent); }
+.prompt-counter.counter-danger { color: var(--c-d9695a); }
+
+.prompt-actions { align-items: center; display: flex; gap: 10px; margin-top: 14px; }
+.prompt-actions .primary-button { opacity: 1; }
+.prompt-actions .primary-button:hover:not(:disabled) { opacity: .88; }
+.prompt-actions .primary-button:active:not(:disabled) { transform: translateY(1px); }
+.prompt-actions .primary-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.prompt-actions .primary-button:disabled { cursor: not-allowed; opacity: .45; }
+
+.ghost-button {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font: 14px 'DM Sans', sans-serif;
+  padding: 9px 14px;
+  transition: border-color .15s;
+}
+.ghost-button:hover:not(:disabled) { border-color: var(--text-muted); color: var(--text); }
+.ghost-button:active:not(:disabled) { background: var(--surface-2); }
+.ghost-button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ghost-button:disabled { cursor: not-allowed; opacity: .4; }
+
+.prompt-spinner {
+  animation: prompt-spin .8s linear infinite;
+  border: 2px solid currentColor;
+  border-radius: 50%;
+  border-right-color: transparent;
+  display: inline-block;
+  height: 12px;
+  margin-right: 6px;
+  vertical-align: -1px;
+  width: 12px;
+}
+@keyframes prompt-spin { to { transform: rotate(360deg); } }
+
+.prompt-link, .prompt-retry {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  margin-left: 8px;
+  padding: 0;
+  text-decoration: underline;
+}
+.prompt-link:hover, .prompt-retry:hover { color: var(--text); }
+
+.detail-body .form-success, .detail-body .form-error { margin-top: 14px; margin-bottom: 0; }
 
 /* Month calendar of cron runs */
 .month-view { display: grid; gap: 12px; margin-bottom: 18px; }

@@ -31,6 +31,8 @@ export interface OfficeStation {
   roomPosition: string
   state: OfficeState
   currentTask: string
+  /** All open tasks attributed to this agent, work-explaining ones first. */
+  tasks: Task[]
   recentActivity: string
   activity: string
   seat: number

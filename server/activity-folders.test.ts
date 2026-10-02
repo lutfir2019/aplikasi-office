@@ -53,7 +53,7 @@ describe('office placement from live activity', () => {
       { profile: 'coder', availability: 'available', active: true, kind: 'cron', label: 'Running a scheduled job', mentionsOpenCode: true },
     ]) })
     expect(office.stations).toMatchObject([
-      { name: 'default', state: 'Collaborating', room: 'Workspace', roomPosition: 'meeting-area', activity: 'Replying to a chat', seat: 1 },
+      { name: 'admin', state: 'Collaborating', room: 'Workspace', roomPosition: 'meeting-area', activity: 'Replying to a chat', seat: 1 },
       { name: 'coder', state: 'Working', room: 'Workspace', roomPosition: 'assigned-desk', activity: 'Running a scheduled job', seat: 2 },
       { name: 'opencode', state: 'Working', room: 'Workspace', activity: 'Building via OpenCode', seat: 3 },
     ])

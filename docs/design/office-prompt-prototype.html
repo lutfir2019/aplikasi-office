@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Office Prompt Tab — Interaction Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ── Token layer (mirrors styles.css) ──────────────────────────── */
+:root {
+  color-scheme: dark;
+  --surface:      #151a16;
+  --surface-2:    #1a211c;
+  --surface-3:    #121613;
+  --border:       #313831;
+  --border-strong:#3a463c;
+  --text:         #eeeae3;
+  --text-muted:   #9ea79e;
+  --text-dim:     #778078;
+  --accent:       #f2b16b;
+  --active-bg:    #20423d;
+  --active-border:#79d6bd;
+  --active-text:  #d9fff2;
+  --danger:       #d9695a;
+  --warn:         #d59a4f;
+  --success-border: #79d6bd;
+  --success-bg:   #20423d;
+}
+[data-theme="light"] {
+  color-scheme: light;
+  --surface:      #f5f6f5;
+  --surface-2:    #f2f4f3;
+  --surface-3:    #f6f7f6;
+  --border:       #eceeec;
+  --border-strong:#e8ebe8;
+  --text:         #332c1f;
+  --text-muted:   #454c45;
+  --text-dim:     #6b736c;
+  --accent:       #6e3e0a;
+  --active-bg:    #e9f3f1;
+  --active-border:#22695a;
+  --active-text:  #005236;
+  --danger:       #842a1e;
+  --warn:         #8f5f22;
+  --success-border: #22695a;
+  --success-bg:   #e9f3f1;
+}
+*{box-sizing:border-box;margin:0}
+body{background:#101311;color:var(--text);font-family:'DM Sans',sans-serif;padding:0;min-height:100vh}
+[data-theme="light"] body{background:#f4f6f5}
+
+/* ── Page chrome ────────────────────────────────────────────────── */
+.page{display:flex;flex-direction:column;align-items:center;padding:40px 20px 60px;gap:40px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:center}
+.proto-title{font:500 13px 'DM Mono',monospace;letter-spacing:.06em;color:var(--text-dim);margin-bottom:4px;text-transform:uppercase}
+.theme-btn,.state-btn{background:var(--surface-2);border:1px solid var(--border-strong);border-radius:4px;color:var(--text);cursor:pointer;font:11px 'DM Mono',monospace;letter-spacing:.05em;padding:6px 12px;transition:border-color .15s}
+.theme-btn:hover,.state-btn:hover{border-color:var(--accent)}
+.state-btn.active{background:var(--active-bg);border-color:var(--active-border);color:var(--active-text)}
+
+/* ── Office backdrop & dialog (mirrors Office.tsx) ──────────────── */
+.office-backdrop{align-items:center;background:rgb(6 9 7 / .72);display:flex;inset:0;justify-content:center;padding:20px;position:fixed;z-index:50}
+.office-detail{background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;margin:0;max-height:calc(100vh - 40px);overflow:auto;padding:22px;position:relative;width:min(720px,100%)}
+.office-close{background:transparent;border:0;border-radius:4px;color:var(--text-muted);cursor:pointer;font:11px 'DM Mono',monospace;letter-spacing:.06em;padding:0;position:absolute;right:18px;top:18px}
+.office-close:hover{color:var(--text)}
+.office-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.detail-head{align-items:center;display:flex;gap:14px}
+.detail-head h2{margin:2px 0 6px;font-size:22px;font-weight:500;letter-spacing:-.03em}
+.eyebrow{color:var(--text-dim);font:11px 'DM Mono',monospace;letter-spacing:.07em}
+.badge{border-radius:4px;font:10px 'DM Mono',monospace;letter-spacing:.05em;padding:2px 7px;text-transform:uppercase;white-space:nowrap}
+.badge.good{background:color-mix(in srgb,var(--active-border) 18%,transparent);color:var(--active-text)}
+.badge.unknown{background:color-mix(in srgb,var(--text-dim) 18%,transparent);color:var(--text-muted)}
+.badge.muted{background:color-mix(in srgb,var(--border-strong) 50%,transparent);color:var(--text-dim)}
+.detail-tabs{border-bottom:1px solid var(--border);display:flex;gap:4px;margin:18px 0 14px}
+.detail-tabs button{background:transparent;border:0;border-bottom:2px solid transparent;color:var(--text-muted);cursor:pointer;font:12px 'DM Mono',monospace;letter-spacing:.06em;padding:8px 12px}
+.detail-tabs button.active{border-bottom-color:var(--accent);color:var(--text)}
+.detail-tabs button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.detail-body{padding-top:4px}
+
+/* ── Pixel character (scale-down silhouette) ────────────────────── */
+.pixel-character{display:inline-grid;gap:1px;image-rendering:pixelated;vertical-align:bottom}
+.pixel-character span{display:block}
+.char-wrap{align-items:flex-end;background:#1a2823;border:2px solid #527065;display:flex;height:70px;justify-content:center;width:70px}
+.char-wrap .pixel-character{zoom:1.1;transform-origin:bottom center}
+/* Simple CSS art for the prototype */
+.pc{width:16px;height:52px;position:relative;display:inline-block}
+.pc::before{content:'';position:absolute;background:var(--pc-skin,#d4a27a);width:10px;height:10px;top:6px;left:3px;border-radius:1px}
+.pc::after{content:'';position:absolute;background:var(--pc-shirt,#4f7c8f);width:14px;height:18px;top:18px;left:1px;border-radius:1px}
+.pc .hair{position:absolute;background:var(--pc-hair,#3a2510);width:12px;height:5px;top:2px;left:2px;border-radius:2px 2px 0 0}
+.pc .pants{position:absolute;background:var(--pc-pants,#2d3e55);width:14px;height:12px;top:34px;left:1px;border-radius:0 0 2px 2px}
+
+/* ── Prompt form — NEW CLASSES ──────────────────────────────────── */
+.prompt-form{display:grid;gap:14px}
+.prompt-profile-badge{align-items:center;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;display:flex;gap:10px;padding:10px 12px}
+.prompt-profile-badge .pchar{zoom:.55}
+.prompt-profile-badge .pchar .pc{width:10px;height:34px}
+.prompt-profile-badge>span:nth-child(2){display:grid;gap:2px;min-width:0}
+.prompt-profile-badge strong{font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.prompt-profile-badge small{color:var(--text-muted);font:11px 'DM Mono',monospace}
+
+.prompt-field{display:grid;gap:6px}
+.field-label{color:var(--text-muted);display:block;font:11px 'DM Mono',monospace;letter-spacing:.06em;text-transform:uppercase}
+.prompt-textarea{background:var(--surface-3);border:1px solid var(--border-strong);border-radius:4px;color:var(--text);field-sizing:content;font:14px/1.5 'DM Sans',sans-serif;min-height:96px;padding:10px 12px;resize:vertical;transition:border-color .15s;width:100%}
+.prompt-textarea:focus-visible{border-color:var(--accent);outline:2px solid var(--accent);outline-offset:1px}
+.prompt-textarea:disabled{cursor:not-allowed;opacity:.7}
+.prompt-textarea.textarea-error{border-color:var(--danger)}
+
+.prompt-footer{align-items:baseline;display:flex;gap:10px;justify-content:space-between}
+.prompt-actions{display:flex;gap:10px}
+.prompt-char-counter{color:var(--text-dim);font:11px 'DM Mono',monospace;letter-spacing:.04em;white-space:nowrap}
+.prompt-char-counter.warn{color:var(--warn)}
+.prompt-char-counter.danger{color:var(--danger)}
+
+/* Primary button */
+.primary-button{background:var(--accent);border:1px solid var(--accent);border-radius:4px;color:#0b0e0c;cursor:pointer;font:600 14px 'DM Sans',sans-serif;opacity:1;padding:9px 16px}
+.primary-button:disabled{cursor:not-allowed;opacity:.45}
+.primary-button:not(:disabled):hover{opacity:.88}
+.primary-button:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+.ghost-button{background:transparent;border:1px solid var(--border-strong);border-radius:4px;color:var(--text-muted);cursor:pointer;font:14px 'DM Sans',sans-serif;padding:9px 14px;transition:border-color .15s}
+.ghost-button:disabled{cursor:not-allowed;opacity:.4}
+.ghost-button:not(:disabled):hover{border-color:var(--text-muted)}
+.ghost-button:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+
+.prompt-spinner{animation:spin .7s linear infinite;border:2px solid transparent;border-top-color:currentColor;border-radius:50%;display:inline-block;height:12px;margin-right:6px;vertical-align:middle;width:12px}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.form-alert{border-left:3px solid;font-size:13px;line-height:1.5;padding:8px 12px;border-radius:0 4px 4px 0}
+.form-alert.success{border-color:var(--success-border);background:var(--success-bg);color:var(--text)}
+.form-alert.error{border-color:var(--danger);background:color-mix(in srgb,var(--danger) 10%,transparent);color:var(--text)}
+.form-alert code{background:color-mix(in srgb,var(--accent) 14%,transparent);border-radius:3px;color:var(--accent);font:12px 'DM Mono',monospace;padding:1px 5px}
+.alert-row{align-items:baseline;display:flex;flex-wrap:wrap;gap:8px}
+.prompt-link,.prompt-retry{background:none;border:0;cursor:pointer;font:inherit;padding:0;text-decoration:underline}
+.prompt-link{color:var(--accent)}
+.prompt-retry{color:var(--danger);font-weight:600}
+
+@media(max-width:480px){.prompt-footer{flex-direction:column;gap:6px}}
+
+/* ── State-switcher demo chrome ─────────────────────────────────── */
+.demo-section{width:100%;max-width:760px}
+.demo-label{font:500 11px 'DM Mono',monospace;letter-spacing:.07em;color:var(--text-dim);text-transform:uppercase;margin-bottom:10px;border-bottom:1px solid var(--border);padding-bottom:6px}
+.annotation{font:12px 'DM Mono',monospace;color:var(--text-muted);margin-top:8px;line-height:1.5}
+.annotation b{color:var(--text)}
+
+/* ── Contrast audit table ───────────────────────────────────────── */
+.audit-table{border-collapse:collapse;font:12px 'DM Mono',monospace;margin-top:8px;width:100%}
+.audit-table th{background:var(--surface-2);color:var(--text-muted);font-weight:500;letter-spacing:.05em;padding:6px 10px;text-align:left}
+.audit-table td{border-top:1px solid var(--border);color:var(--text);padding:5px 10px}
+.audit-table .pass{color:var(--active-text)}
+.audit-table .swatch{border-radius:3px;display:inline-block;height:10px;margin-right:4px;width:10px;vertical-align:middle;border:1px solid var(--border)}
+
+/* Inline dialog preview (not fixed) */
+.dialog-preview{background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;max-width:720px;padding:22px;position:relative;width:100%}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- Controls -->
+  <div>
+    <p class="proto-title" style="text-align:center">Office Prompt Tab — t_4c403cb6 Design Prototype</p>
+    <div class="toolbar" style="margin-top:12px">
+      <span style="color:var(--text-muted);font:11px 'DM Mono',monospace">Theme:</span>
+      <button class="theme-btn" id="btn-dark" onclick="setTheme('dark')">Dark</button>
+      <button class="theme-btn" id="btn-light" onclick="setTheme('light')">Light</button>
+      <span style="color:var(--border-strong);margin:0 6px">|</span>
+      <span style="color:var(--text-muted);font:11px 'DM Mono',monospace">State:</span>
+      <button class="state-btn active" onclick="setState('pristine')">Pristine</button>
+      <button class="state-btn" onclick="setState('dirty')">Dirty (typing)</button>
+      <button class="state-btn" onclick="setState('nearmax')">Near max</button>
+      <button class="state-btn" onclick="setState('loading')">Loading</button>
+      <button class="state-btn" onclick="setState('success')">Success</button>
+      <button class="state-btn" onclick="setState('error')">Error</button>
+    </div>
+  </div>
+
+  <!-- Live Demo Dialog -->
+  <div class="demo-section">
+    <div class="demo-label">Live preview</div>
+    <div class="dialog-preview" role="dialog" aria-modal="true" aria-labelledby="demo-title" id="demo-dialog">
+      <button class="office-close" onclick="void 0">Close</button>
+
+      <!-- Header -->
+      <div class="detail-head">
+        <div class="char-wrap">
+          <div class="pchar">
+            <div class="pc" style="--pc-hair:#4a2a14;--pc-skin:#d4985a;--pc-shirt:#3a5874;--pc-pants:#1c3050">
+              <span class="hair"></span><span class="pants"></span>
+            </div>
+          </div>
+        </div>
+        <div>
+          <p class="eyebrow">STATION DETAIL</p>
+          <h2 id="demo-title">architect</h2>
+          <span class="badge good">Working</span>
+        </div>
+      </div>
+
+      <!-- Tabs -->
+      <div class="detail-tabs" role="tablist" aria-label="architect details">
+        <button type="button" role="tab" aria-selected="false">Overview</button>
+        <button type="button" role="tab" aria-selected="false">Folder</button>
+        <button type="button" role="tab" aria-selected="false">Memory</button>
+        <button type="button" role="tab" aria-selected="true" class="active">Run Task</button>
+      </div>
+
+      <!-- Prompt tab body -->
+      <div role="tabpanel" aria-label="Run Task" class="detail-body" id="prompt-panel">
+        <div class="prompt-form" id="pform">
+
+          <!-- Profile badge (read-only) -->
+          <div class="prompt-profile-badge" aria-label="Dispatching to architect">
+            <div class="pchar">
+              <div class="pc" style="--pc-hair:#4a2a14;--pc-skin:#d4985a;--pc-shirt:#3a5874;--pc-pants:#1c3050">
+                <span class="hair"></span><span class="pants"></span>
+              </div>
+            </div>
+            <span>
+              <strong>architect</strong>
+              <small>Hermes profile</small>
+            </span>
+            <span class="badge good">Working</span>
+          </div>
+
+          <!-- Textarea field -->
+          <div class="prompt-field">
+            <label class="field-label" for="ptextarea">Task instruction</label>
+            <textarea
+              class="prompt-textarea"
+              id="ptextarea"
+              rows="4"
+              maxlength="4000"
+              placeholder="Describe the task for architect… e.g. Review the API contract for POST /api/tasks and flag any security gaps."
+              aria-label="Task instruction for architect"
+              aria-describedby="prompt-char-counter"
+              oninput="onInput(this)"
+            ></textarea>
+          </div>
+
+          <!-- Footer: counter + actions -->
+          <div class="prompt-footer">
+            <div class="prompt-actions">
+              <button type="button" class="primary-button" id="send-btn" disabled aria-disabled="true" onclick="void 0">
+                Send Task
+              </button>
+              <button type="button" class="ghost-button" id="clear-btn" disabled onclick="clearForm()">
+                Clear
+              </button>
+            </div>
+            <span class="prompt-char-counter" id="prompt-char-counter" aria-live="off">0 / 4,000</span>
+          </div>
+
+          <!-- Alert region (hidden by default) -->
+          <div id="alert-region" role="alert" aria-live="polite" hidden></div>
+
+        </div>
+      </div>
+    </div>
+
+    <p class="annotation" style="margin-top:10px">
+      <b>Tab order:</b> Close → Tabs (Overview / Folder / Memory / Run Task) → Textarea → Send Task → Clear → wraps to Close<br>
+      <b>Escape:</b> closes dialog, returns focus to station trigger button<br>
+      <b>aria-busy:</b> on tabpanel during submit
+    </p>
+  </div>
+
+  <!-- State annotations -->
+  <div class="demo-section">
+    <div class="demo-label">State reference</div>
+    <table class="audit-table" style="width:100%">
+      <thead>
+        <tr><th>State</th><th>Textarea</th><th>Send</th><th>Clear</th><th>Counter</th><th>Alert</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><b>Pristine</b></td><td>empty, placeholder</td><td>disabled</td><td>disabled</td><td style="color:var(--text-dim)">0 / 4,000 dim</td><td>hidden</td></tr>
+        <tr><td><b>Dirty</b></td><td>user text</td><td>enabled</td><td>enabled</td><td>live, normal</td><td>hidden</td></tr>
+        <tr><td><b>Near max</b></td><td>4,000 chars</td><td>enabled</td><td>enabled</td><td style="color:var(--danger)">n / 4,000 red + border</td><td>hidden</td></tr>
+        <tr><td><b>Loading</b></td><td>disabled 70%</td><td>disabled, spinner</td><td>disabled</td><td>frozen</td><td>hidden; aria-busy=true</td></tr>
+        <tr><td><b>Success</b></td><td>cleared</td><td>disabled</td><td>disabled</td><td>0 / 4,000</td><td>polite alert, task ID, 8s auto-clear</td></tr>
+        <tr><td><b>Error</b></td><td>border red, re-enabled</td><td>enabled</td><td>enabled</td><td>unchanged</td><td>assertive alert, retry</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- WCAG Contrast Audit -->
+  <div class="demo-section">
+    <div class="demo-label">WCAG AA Contrast Audit (computed, verified)</div>
+    <table class="audit-table">
+      <thead><tr><th>Pair</th><th>FG</th><th>BG</th><th>Ratio</th><th>Level</th></tr></thead>
+      <tbody>
+        <tr>
+          <td>Body text / dark surface</td>
+          <td><span class="swatch" style="background:#eeeae3"></span>#eeeae3</td>
+          <td><span class="swatch" style="background:#151a16"></span>#151a16</td>
+          <td>14.70:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>text-muted / dark surface</td>
+          <td><span class="swatch" style="background:#9ea79e"></span>#9ea79e</td>
+          <td><span class="swatch" style="background:#151a16"></span>#151a16</td>
+          <td>7.11:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>Amber counter warn / dark</td>
+          <td><span class="swatch" style="background:#d59a4f"></span>#d59a4f</td>
+          <td><span class="swatch" style="background:#151a16"></span>#151a16</td>
+          <td>7.19:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>Red danger / dark surface</td>
+          <td><span class="swatch" style="background:#d9695a"></span>#d9695a</td>
+          <td><span class="swatch" style="background:#151a16"></span>#151a16</td>
+          <td>5.14:1</td>
+          <td class="pass">AA</td>
+        </tr>
+        <tr>
+          <td>Accent / dark surface</td>
+          <td><span class="swatch" style="background:#f2b16b"></span>#f2b16b</td>
+          <td><span class="swatch" style="background:#151a16"></span>#151a16</td>
+          <td>9.47:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>Button text / accent bg</td>
+          <td><span class="swatch" style="background:#0b0e0c"></span>#0b0e0c</td>
+          <td><span class="swatch" style="background:#f2b16b"></span>#f2b16b</td>
+          <td>10.42:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>Body text / light surface</td>
+          <td><span class="swatch" style="background:#332c1f"></span>#332c1f</td>
+          <td><span class="swatch" style="background:#f5f6f5"></span>#f5f6f5</td>
+          <td>12.75:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>text-muted / light surface</td>
+          <td><span class="swatch" style="background:#454c45"></span>#454c45</td>
+          <td><span class="swatch" style="background:#f5f6f5"></span>#f5f6f5</td>
+          <td>8.17:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>Amber warn / light surface</td>
+          <td><span class="swatch" style="background:#8f5f22"></span>#8f5f22</td>
+          <td><span class="swatch" style="background:#f5f6f5"></span>#f5f6f5</td>
+          <td>5.06:1</td>
+          <td class="pass">AA</td>
+        </tr>
+        <tr>
+          <td>Red danger / light surface</td>
+          <td><span class="swatch" style="background:#842a1e"></span>#842a1e</td>
+          <td><span class="swatch" style="background:#f5f6f5"></span>#f5f6f5</td>
+          <td>8.32:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+        <tr>
+          <td>Accent / light surface</td>
+          <td><span class="swatch" style="background:#6e3e0a"></span>#6e3e0a</td>
+          <td><span class="swatch" style="background:#f5f6f5"></span>#f5f6f5</td>
+          <td>8.23:1</td>
+          <td class="pass">AAA</td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="annotation" style="margin-top:8px">Ratios computed with WCAG 2.1 relative luminance formula. All 11 pairs pass AA (≥4.5:1 body, ≥3:1 large). No failures.</p>
+  </div>
+
+  <!-- Error message mapping -->
+  <div class="demo-section">
+    <div class="demo-label">Error message map (API → UI copy)</div>
+    <table class="audit-table">
+      <thead><tr><th>HTTP</th><th>Condition</th><th>Message shown</th></tr></thead>
+      <tbody>
+        <tr><td>400</td><td>Validation / profile unknown</td><td>API message verbatim (already user-friendly)</td></tr>
+        <tr><td>401</td><td>Access code locked</td><td>"Ruang is locked. Enter the access code to dispatch tasks."</td></tr>
+        <tr><td>403</td><td>Missing CSRF header</td><td>"Request rejected by the server. Refresh the page and try again."</td></tr>
+        <tr><td>500</td><td>CLI execution failed</td><td>"The server could not create the task. Check Logs for details."</td></tr>
+        <tr><td>Network</td><td>fetch() threw</td><td>"Could not reach the server. Check your connection."</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+</div><!-- /page -->
+
+<script>
+const MAX = 4000
+
+/* ── Theme ──────────────────────────────────────────────────────── */
+function setTheme(t){
+  document.documentElement.dataset.theme = t === 'light' ? 'light' : ''
+  document.getElementById('btn-dark').classList.toggle('active', t === 'dark')
+  document.getElementById('btn-light').classList.toggle('active', t === 'light')
+}
+
+/* ── Textarea live input ─────────────────────────────────────────── */
+function onInput(el){
+  const len = el.value.length
+  const counter = document.getElementById('prompt-char-counter')
+  const sendBtn = document.getElementById('send-btn')
+  const clearBtn = document.getElementById('clear-btn')
+  counter.textContent = `${len.toLocaleString()} / 4,000`
+  counter.className = 'prompt-char-counter' + (len >= 3950 ? ' danger' : len >= 3800 ? ' warn' : '')
+  el.classList.toggle('textarea-error', len >= MAX)
+  const isSendDisabled = len === 0 || len > MAX
+  sendBtn.disabled = isSendDisabled
+  sendBtn.setAttribute('aria-disabled', isSendDisabled ? 'true' : 'false')
+  clearBtn.disabled = len === 0
+}
+
+function clearForm(){
+  const ta = document.getElementById('ptextarea')
+  ta.value = ''
+  ta.className = 'prompt-textarea'
+  onInput(ta)
+  document.getElementById('alert-region').hidden = true
+}
+
+/* ── State simulation ────────────────────────────────────────────── */
+const states = {
+  pristine(){
+    reset()
+    setCounter(0)
+    setSend(true)
+    setClear(true)
+    setAlert(null)
+    setAriabusy(false)
+  },
+  dirty(){
+    reset()
+    const ta = document.getElementById('ptextarea')
+    ta.value = 'Review the API contract for POST /api/tasks and flag any security gaps, especially around input validation and execFile argument sanitisation.'
+    onInput(ta)
+    setAlert(null)
+  },
+  nearmax(){
+    reset()
+    const ta = document.getElementById('ptextarea')
+    ta.value = 'A'.repeat(3975)
+    onInput(ta)
+    setAlert(null)
+  },
+  loading(){
+    reset()
+    const ta = document.getElementById('ptextarea')
+    ta.value = 'Design a new agent prompt form for the OfficeDetail dialog with all interaction states covered.'
+    ta.disabled = true
+    setCounter(ta.value.length)
+    setSend(true)
+    document.getElementById('send-btn').innerHTML = '<span class="prompt-spinner"></span>Sending…'
+    document.getElementById('send-btn').setAttribute('aria-label','Sending task, please wait')
+    setClear(true)
+    setAlert(null)
+    setAriabusy(true)
+  },
+  success(){
+    reset()
+    setCounter(0)
+    setSend(true)
+    setClear(true)
+    setAlert('success')
+    setAriabusy(false)
+  },
+  error(){
+    reset()
+    const ta = document.getElementById('ptextarea')
+    ta.value = 'Fix the broken import in server/index.ts that prevents the dev server from starting.'
+    onInput(ta)
+    ta.classList.add('textarea-error')
+    setAlert('error')
+    setAriabusy(false)
+  }
+}
+
+function reset(){
+  const ta = document.getElementById('ptextarea')
+  ta.disabled = false
+  ta.value = ''
+  ta.className = 'prompt-textarea'
+  const btn = document.getElementById('send-btn')
+  btn.innerHTML = 'Send Task'
+  btn.removeAttribute('aria-label')
+  btn.disabled = true
+  btn.setAttribute('aria-disabled', 'true')
+  document.getElementById('clear-btn').disabled = true
+  document.getElementById('alert-region').hidden = true
+  setCounter(0)
+  setAriabusy(false)
+}
+
+function setCounter(n){
+  const el = document.getElementById('prompt-char-counter')
+  el.textContent = `${n.toLocaleString()} / 4,000`
+  el.className = 'prompt-char-counter' + (n >= 3950 ? ' danger' : n >= 3800 ? ' warn' : '')
+}
+
+function setSend(d){
+  const b = document.getElementById('send-btn')
+  b.disabled = d
+  b.setAttribute('aria-disabled', d ? 'true' : 'false')
+}
+function setClear(d){ document.getElementById('clear-btn').disabled = d }
+
+function setAriabusy(b){
+  document.getElementById('prompt-panel').setAttribute('aria-busy', b ? 'true' : 'false')
+}
+
+function setAlert(kind){
+  const el = document.getElementById('alert-region')
+  if(!kind){ el.hidden = true; return }
+  el.hidden = false
+  if(kind === 'success'){
+    el.setAttribute('aria-live','polite')
+    el.innerHTML = `
+      <div class="form-alert success" role="alert">
+        <div class="alert-row">
+          Task dispatched · <code>t_70442bac</code>
+          <span class="badge good">ready</span>
+          <button class="prompt-link" onclick="void 0">View in Task Board ↗</button>
+        </div>
+      </div>`
+  } else {
+    el.setAttribute('aria-live','assertive')
+    el.innerHTML = `
+      <div class="form-alert error" role="alert">
+        <div class="alert-row">
+          Agent 'unknown-agent' is not in the active roster. Try refreshing.
+          <button class="prompt-retry" onclick="void 0">Retry</button>
+        </div>
+      </div>`
+  }
+}
+
+function setState(s){
+  document.querySelectorAll('.state-btn').forEach(b=>b.classList.remove('active'))
+  event.currentTarget.classList.add('active')
+  states[s]()
+}
+
+/* Init */
+setTheme('dark')
+</script>
+</body>
+</html>

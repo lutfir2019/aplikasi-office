@@ -4,7 +4,7 @@ import { promisify } from 'node:util'
 const execFile = promisify(execFileCallback)
 const CACHE_MS = 10_000
 const INSIGHTS_CACHE_MS = 60_000
-const COMMAND_TIMEOUT_MS = 8_000
+const COMMAND_TIMEOUT_MS = 20_000
 const COMMAND_LOG_LIMIT = 100
 const LOG_TAIL_LINES = 200
 
@@ -23,6 +23,8 @@ export interface RuntimeSnapshot {
   openCode: Source<string>
   fetchedAt: string
 }
+export interface TeamMember { name: string; model: string; gateway: GatewayState; role?: string; state?: OfficeState }
+export interface TeamSnapshot { team: Source<TeamMember[]>; fetchedAt: string }
 export interface Task { title: string; status: string; id?: string; assignee?: string; priority?: number; board?: string }
 export interface KanbanBoard { slug: string; name: string; current: boolean; total: number }
 /** `agent` is the Hermes profile the job belongs to (cron jobs are stored per profile). */
@@ -47,6 +49,8 @@ export interface OfficeStation {
   roomPosition: string
   state: OfficeState
   currentTask: string
+  /** All open tasks attributed to this agent, work-explaining ones first. */
+  tasks: Task[]
   recentActivity: string
   /** Short, human label of what the station is doing now ('' when nothing is known). */
   activity: string
@@ -96,7 +100,12 @@ export interface LogFile { name: string; label: string; source: Source<LogLine[]
 export interface LogsSnapshot { files: LogFile[]; fetchedAt: string }
 
 type Run = (file: string, args: string[], options?: RunOptions) => Promise<string>
-interface RunOptions { /** stdout of a non-zero exit that is an expected empty state, not a failure. */ benign?: RegExp }
+interface RunOptions {
+  /** stdout of a non-zero exit that is an expected empty state, not a failure. */
+  benign?: RegExp
+  /** Safe audit label; never put free-text task prompts in the command log. */
+  auditLabel?: string
+}
 
 /** Error thrown by the command runner. Carries stdout so a caller can recognise a benign non-zero exit. */
 export class CommandError extends Error {
@@ -423,12 +432,15 @@ function describeFailure(error: unknown): CommandError {
 
 async function systemRun(file: string, args: string[], options: RunOptions = {}): Promise<string> {
   const started = Date.now()
-  const command = [file, ...args].join(' ')
+  const command = options.auditLabel ?? [file, ...args].join(' ')
   try {
     const { stdout } = await execFile(file, args, {
       timeout: COMMAND_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
-      env: { ...process.env, NO_COLOR: '1', TERM: 'dumb', COLUMNS: '200', PYTHONIOENCODING: 'utf-8' },
+      // HERMES_DELEGATED_CHILD_CONTEXT is dropped (undefined values are not passed on): when Ruang
+      // itself runs inside a delegated Hermes child, that marker makes `hermes kanban` refuse to
+      // write. Ruang never runs a shell, so no argument is ever interpolated.
+      env: { ...process.env, HERMES_DELEGATED_CHILD_CONTEXT: undefined, NO_COLOR: '1', TERM: 'dumb', COLUMNS: '200', PYTHONIOENCODING: 'utf-8' },
     })
     recordCommand({ command, ok: true, durationMs: Date.now() - started, at: new Date(started).toISOString() })
     return stdout
@@ -479,6 +491,92 @@ export async function collectSnapshot(run: Run = systemRun): Promise<RuntimeSnap
     read(run, 'opencode', ['--version'], (value) => value.trim().split('\n').pop()?.trim() || 'Unknown', 'Unknown'),
   ])
   return { profiles, openCode, fetchedAt: new Date().toISOString() }
+}
+
+export async function collectTeam(run: Run = systemRun): Promise<TeamSnapshot> {
+  const team = await read<TeamMember[]>(run, 'hermes', ['profile', 'list'], parseProfiles, [])
+  return { team, fetchedAt: new Date().toISOString() }
+}
+
+// ---------------------------------------------------------------------------
+// Kanban task creation (`hermes kanban create <title> --json`). The contract
+// lives in docs/contracts/profile-task-execution.md: the title doubles as the
+// prompt, the assignee must be a profile from the active roster, and the call
+// always goes through execFile with a discrete argv array (see systemRun).
+
+export const PROMPT_MAX = 4000
+export const PRIORITY_MIN = -100
+export const PRIORITY_MAX = 100
+export const WORKSPACE_KINDS = ['dir', 'scratch', 'worktree'] as const
+export type WorkspaceKind = (typeof WORKSPACE_KINDS)[number]
+
+// Wire field names match the contract (and Hermes' own kanban task JSON) exactly: workspace_kind
+// and workspace_path stay snake_case so the route can pass the parsed request body straight
+// through with no translation layer.
+export interface CreateTaskInput {
+  profile: string
+  prompt: string
+  priority?: number
+  workspace_kind?: WorkspaceKind
+  workspace_path?: string
+}
+
+export interface CreatedTask {
+  id: string
+  title: string
+  assignee?: string
+  status: string
+  priority?: number
+  workspace_kind?: string
+  workspace_path?: string
+  createdAt?: string
+}
+
+/** Validate the cross-field shape once; the route maps each failure to its 400 message. */
+export function taskInputError(input: unknown, roster: readonly string[]): string | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return 'Request body must be a JSON object.'
+  const record = input as Partial<CreateTaskInput>
+  if (typeof record.profile !== 'string' || !PROFILE_NAME.test(record.profile)) return 'Unknown or inactive agent profile.'
+  if (!roster.includes(record.profile)) return `Unknown or inactive agent profile '${record.profile}'. Must be one of: ${roster.join(', ')}.`
+  if (typeof record.prompt !== 'string' || !record.prompt.trim() || record.prompt.trim().length > PROMPT_MAX) return `Prompt must be between 1 and ${PROMPT_MAX} characters.`
+  if (record.priority !== undefined && (!Number.isInteger(record.priority) || record.priority < PRIORITY_MIN || record.priority > PRIORITY_MAX)) return `Priority must be an integer between ${PRIORITY_MIN} and ${PRIORITY_MAX}.`
+  if (record.workspace_kind !== undefined && !(WORKSPACE_KINDS as readonly string[]).includes(record.workspace_kind)) return `Workspace kind must be one of: ${WORKSPACE_KINDS.join(', ')}.`
+  if (record.workspace_path !== undefined && (typeof record.workspace_path !== 'string' || !record.workspace_path.startsWith('/') || record.workspace_path.includes('..'))) return 'Workspace path must be an absolute path without directory traversal.'
+  return undefined
+}
+
+/** The created task from `hermes kanban create --json`: a flat object, not wrapped in `{ task }`. */
+export function parseCreatedTask(output: string): CreatedTask {
+  const parsed = jsonPayload(output)
+  const record = parsed && typeof parsed === 'object' ? parsed as Record<string, unknown> : undefined
+  const id = text(record?.id)
+  const title = text(record?.title)
+  if (!id || !TASK_ID.test(id) || !title) throw new Error('Unrecognized Kanban task output.')
+  const status = (text(record?.status) ?? 'ready').toLowerCase()
+  return {
+    id,
+    title,
+    ...(text(record?.assignee) ? { assignee: text(record?.assignee) } : {}),
+    status,
+    ...(typeof record?.priority === 'number' && Number.isFinite(record?.priority) ? { priority: record?.priority } : {}),
+    ...(text(record?.workspace_kind) ? { workspace_kind: text(record?.workspace_kind) } : {}),
+    ...(text(record?.workspace_path) ? { workspace_path: text(record?.workspace_path) } : {}),
+    ...(epoch(record?.created_at) ? { createdAt: epoch(record?.created_at) } : {}),
+  }
+}
+
+export async function createTask(input: CreateTaskInput, run: Run = systemRun): Promise<CreatedTask> {
+  const title = input.prompt.trim()
+  const priority = input.priority ?? 0
+  const args = [
+    'kanban', 'create', title,
+    '--assignee', input.profile,
+    '--workspace', input.workspace_kind === 'scratch' ? 'scratch' : `${input.workspace_kind ?? 'dir'}:${input.workspace_path ?? process.cwd()}`,
+    '--priority', String(priority),
+    '--triage',
+    '--json',
+  ]
+  return parseCreatedTask(await run('hermes', args, { auditLabel: `hermes kanban create [prompt ${title.length} chars] --assignee ${input.profile}` }))
 }
 
 /** Board slugs passed to `hermes kanban --board`: Hermes' own slug rule, never an option. */
@@ -779,6 +877,14 @@ function attributedTask(tasks: Task[], aliases: readonly string[]): Task | undef
   return mine.find((task) => !['done', 'archived'].includes(task.status.toLowerCase()))
 }
 
+function attributedTasks(tasks: Task[], aliases: readonly string[]): Task[] {
+  const mine = tasks.filter((task) => task.assignee && aliases.includes(task.assignee.trim().toLowerCase()) && !['done', 'archived'].includes(task.status.toLowerCase()))
+  // Work-explaining statuses first, then the rest in their original order.
+  const work = mine.filter((task) => ACTIVE_TASK_ORDER.includes(task.status.toLowerCase()))
+  const rest = mine.filter((task) => !ACTIVE_TASK_ORDER.includes(task.status.toLowerCase()))
+  return [...work, ...rest]
+}
+
 function taskState(task: Task | undefined): OfficeState {
   if (!task) return 'Unknown'
   if (task.status.toLowerCase() === 'running') return 'Working'
@@ -856,6 +962,7 @@ export function buildOfficeSnapshot(runtime: RuntimeSnapshot, board: TaskBoardSn
     const direct: OfficeState | undefined = overlay ?? (live.state !== 'Unknown' ? (taskWorkState !== 'Unknown' ? taskWorkState : live.state) : undefined)
     const state: OfficeState = direct ?? (taskWorkState !== 'Unknown' ? taskWorkState : collaboration !== 'Unknown' ? collaboration : freshRuntime && freshBoard && freshActivity && liveKnown ? 'Idle' : 'Unknown')
     const currentTask = board.tasks.availability === 'unavailable' ? 'Not Available' : task?.title ?? 'No attributed task'
+    const allTasks = freshBoard ? attributedTasks(board.tasks.data, agent.aliases) : []
     const activityLabel = state === 'Working' && taskWorkState === 'Working' && task ? `Kanban: ${task.title}`
       : state === 'Reviewing' && task ? `Reviewing: ${task.title}`
         : ['Working', 'Collaborating'].includes(state) && live.probe?.label ? live.probe.label
@@ -869,12 +976,13 @@ export function buildOfficeSnapshot(runtime: RuntimeSnapshot, board: TaskBoardSn
     const liveProvenance = options.agentActivity ? `; live activity (${agent.profile ? `hermes -p ${agent.profile} logs/sessions` : 'agent logs mentioning OpenCode'}, last ${ACTIVITY_WINDOW}): ${!agentActivity || !live.known ? 'unavailable' : live.state !== 'Unknown' ? live.probe?.kind ?? 'active' : 'none'}` : ''
     return {
       id: agent.id,
-      name: agent.id,
+      name: agent.id === 'default' ? 'admin' : agent.id,
       role: agent.role,
       ...roomForState(state, index),
       seat: index + 1,
       state,
       currentTask,
+      tasks: allTasks,
       recentActivity,
       activity: activityLabel,
       provenance: `${runtimeProvenance}; explicit state records: ${overlay ? 'fresh declared state' : 'none'}; Kanban: ${board.tasks.availability}${freshBoard ? ' fresh' : ' stale or unavailable'}; activity: ${activity.sessions.availability}${freshActivity ? ' fresh' : ' stale or unavailable'}${liveProvenance}${managedIdle}`,
@@ -928,7 +1036,21 @@ function cachedSource<T>(collect: () => Promise<T>, ttl = CACHE_MS) {
   return Object.assign(get, { clear: () => { entry = undefined } })
 }
 
-const runtimeSource = cachedSource(() => collectSnapshot())
+/**
+ * Keeps the previous roster when a refresh could not read the profile list. An unavailable read
+ * carries an empty profile array, which would empty the office and drop every avatar; the stale
+ * `fetchedAt` is kept too, so states fall back to Unknown instead of claiming fresh knowledge.
+ */
+export function retainRuntimeRoster(previous: RuntimeSnapshot | undefined, next: RuntimeSnapshot): RuntimeSnapshot {
+  if (next.profiles.availability === 'available' || previous?.profiles.availability !== 'available') return next
+  return { ...next, profiles: previous.profiles, fetchedAt: previous.fetchedAt }
+}
+
+let lastRuntime: RuntimeSnapshot | undefined
+const runtimeSource = cachedSource(async () => {
+  lastRuntime = retainRuntimeRoster(lastRuntime, await collectSnapshot())
+  return lastRuntime
+})
 const taskBoardSource = cachedSource(() => collectTaskBoard())
 const calendarSource = cachedSource(() => collectCalendar())
 const activitySource = cachedSource(() => collectActivity())
@@ -936,6 +1058,7 @@ const knowledgeSource = cachedSource(() => collectKnowledge())
 const channelSource = cachedSource(() => collectChannels())
 const insightsSource = cachedSource(() => collectInsights(), INSIGHTS_CACHE_MS)
 const logsSource = cachedSource(() => collectLogs(), 5_000)
+const teamSource = cachedSource(() => collectTeam())
 const agentActivitySource = cachedSource(async () => {
   const runtime = await getSnapshot()
   return collectAgentActivity(runtime.profiles.availability === 'available' ? runtime.profiles.data.map((profile) => profile.name) : [])
@@ -943,12 +1066,56 @@ const agentActivitySource = cachedSource(async () => {
 
 export function getSnapshot(now = Date.now()): Promise<RuntimeSnapshot> { return runtimeSource(now) }
 export function clearSnapshotCache(): void { runtimeSource.clear() }
+
+/** Carries the HTTP status the route should answer with; the message is shown to the operator. */
+export class TaskRequestError extends Error {
+  constructor(message: string, readonly status: number) { super(message) }
+}
+
+/** Drops every cached source that answers for tasks, so the next read sees the new task. */
+export function invalidateTaskCaches(): void {
+  taskBoardSource.clear()
+  runtimeSource.clear()
+  agentActivitySource.clear()
+}
+
+async function rosterNames(): Promise<readonly string[]> {
+  const runtime = await getSnapshot()
+  return runtime.profiles.availability === 'available' ? runtime.profiles.data.map((profile) => profile.name) : []
+}
+
+/** `run`, `roster` and `invalidate` are test seams; production uses the real command runner. */
+export interface SubmitTaskDeps { run?: Run; roster?: () => Promise<readonly string[]>; invalidate?: () => void }
+
+/**
+ * The only write path of Ruang: validates against the live profile roster, then creates the task
+ * through the Hermes CLI. No subprocess runs until every input has passed.
+ * ponytail: the dispatcher picks the task up on its next tick, so nothing is triggered here; add
+ * an explicit nudge only if Hermes ever gains a safe `kanban dispatch` command.
+ */
+export async function submitTask(input: unknown, deps: SubmitTaskDeps = {}): Promise<CreatedTask> {
+  const roster = await (deps.roster ?? rosterNames)()
+  if (roster.length === 0) throw new TaskRequestError('The Hermes profile roster is unavailable, so no task was created.', 503)
+  const invalid = taskInputError(input, roster)
+  if (invalid) throw new TaskRequestError(invalid, 400)
+  try {
+    const task = await createTask(input as CreateTaskInput, deps.run ?? systemRun)
+    ;(deps.invalidate ?? invalidateTaskCaches)()
+    return task
+  } catch (error) {
+    if (error instanceof TaskRequestError) throw error
+    // Hermes' own message is safe to show (it never echoes the prompt); anything else stays generic.
+    const detail = error instanceof CommandError ? error.message : 'Read command was unavailable.'
+    throw new TaskRequestError(`Failed to create Kanban task: ${detail}`, 500)
+  }
+}
 export function getTaskBoard(now = Date.now()): Promise<TaskBoardSnapshot> { return taskBoardSource(now) }
 export function getCalendar(now = Date.now()): Promise<CalendarSnapshot> { return calendarSource(now) }
 export function getActivity(now = Date.now()): Promise<ActivitySnapshot> { return activitySource(now) }
 export function getKnowledge(now = Date.now()): Promise<KnowledgeSnapshot> { return knowledgeSource(now) }
 export function getChannels(now = Date.now()): Promise<ChannelSnapshot> { return channelSource(now) }
 export function getLogs(now = Date.now()): Promise<LogsSnapshot> { return logsSource(now) }
+export function getTeam(now = Date.now()): Promise<TeamSnapshot> { return teamSource(now) }
 
 /** Detail for a task on the current board; returns undefined for ids Hermes did not list. */
 /** Details of a task on the current board snapshot; `board` picks the board it lives on. */

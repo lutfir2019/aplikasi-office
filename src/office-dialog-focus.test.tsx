@@ -9,7 +9,7 @@ const testEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRON
 testEnvironment.IS_REACT_ACT_ENVIRONMENT = true
 
 const office: OfficeSnapshot = {
-  stations: [{ id: 'default', name: 'default', role: 'Hermes profile', room: 'Workspace', roomPosition: 'assigned-desk', state: 'Working', currentTask: 'Review focus behavior', recentActivity: 'No attributed recent activity', activity: 'Kanban: Review focus behavior', seat: 1, provenance: 'Test evidence', freshness: 'Current' }],
+  stations: [{ id: 'default', name: 'default', role: 'Hermes profile', room: 'Workspace', roomPosition: 'assigned-desk', state: 'Working', currentTask: 'Review focus behavior', tasks: [], recentActivity: 'No attributed recent activity', activity: 'Kanban: Review focus behavior', seat: 1, provenance: 'Test evidence', freshness: 'Current' }],
   summary: { declared: 1, active: 1, idle: 0, offline: 0, unknown: 0, gatewaysReachable: 1, gatewaysDeclared: 1 }, fetchedAt: '2026-09-27T12:00:00.000Z',
 }
 const activity: ActivitySnapshot = { sessions: { availability: 'available', data: [] }, fetchedAt: office.fetchedAt }
@@ -28,7 +28,7 @@ describe('Office detail dialog focus', () => {
     await act(async () => { trigger.click() })
     const close = document.querySelector<HTMLButtonElement>('.office-close')!
     const tabs = [...document.querySelectorAll<HTMLButtonElement>('.detail-tabs button')]
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Overview', 'Folder', 'Memory'])
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Overview', 'Folder', 'Memory', 'Run Task'])
     const last = tabs[tabs.length - 1]
     // Tab from the last control wraps to the first (Close); Shift+Tab from Close wraps back.
     last.focus()

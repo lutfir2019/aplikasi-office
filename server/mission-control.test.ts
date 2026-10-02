@@ -5,6 +5,8 @@ import {
   collectKnowledge,
   collectSnapshot,
   collectTaskBoard,
+  collectTeam,
+  CommandError,
   buildOfficeSnapshot,
   buildOfficeSummary,
   parseChannelStatus,
@@ -12,6 +14,7 @@ import {
   parseProfiles,
   parseSessions,
   parseSkills,
+  retainRuntimeRoster,
 } from './mission-control.js'
 
 describe('Hermes output parsers', () => {
@@ -61,6 +64,47 @@ describe('Hermes output parsers', () => {
     expect(snapshot.profiles.data.map((profile) => [profile.name, profile.gateway])).toEqual([['default', 'Running'], ['coder', 'Stopped']])
     // Gateway states come from the profile list alone: no per-profile gateway command runs.
     expect(calls.filter((call) => call.includes('gateway'))).toEqual([])
+  })
+})
+
+describe('team collector', () => {
+  const profileList = ' Profile    Model       Gateway\n ───────\n ◆default  gpt-5.6    running\n  coder  gpt-5.5  stopped\n'
+
+  it('collectTeam parses the profile list into an available team snapshot', async () => {
+    const team = await collectTeam(async (_file, args) => {
+      expect(args).toEqual(['profile', 'list'])
+      return profileList
+    })
+
+    expect(team.team).toEqual({
+      availability: 'available',
+      data: [
+        { name: 'default', model: 'gpt-5.6', gateway: 'Running' },
+        { name: 'coder', model: 'gpt-5.5', gateway: 'Stopped' },
+      ],
+    })
+    expect(Number.isNaN(Date.parse(team.fetchedAt))).toBe(false)
+  })
+
+  it('collectTeam returns unavailable when the profile command fails', async () => {
+    const team = await collectTeam(async () => { throw new CommandError('boom', 'COMMAND_FAILED') })
+
+    expect(team.team).toMatchObject({ availability: 'unavailable', data: [], error: { code: 'COMMAND_FAILED' } })
+  })
+
+  it('collectTeam returns unavailable when the profile command times out', async () => {
+    const team = await collectTeam(async () => { throw new CommandError('slow', 'TIMEOUT') })
+
+    expect(team.team).toMatchObject({ availability: 'unavailable', data: [], error: { code: 'TIMEOUT' } })
+  })
+
+  it('collectTeam treats empty or unrecognized profile output as unavailable', async () => {
+    await expect(collectTeam(async () => ' Profile    Model       Gateway\\n ───────\\n')).resolves.toMatchObject({
+      team: { availability: 'unavailable', data: [], error: { code: 'COMMAND_FAILED' } },
+    })
+    await expect(collectTeam(async () => 'Hermes profile service is starting.')).resolves.toMatchObject({
+      team: { availability: 'unavailable', data: [], error: { code: 'COMMAND_FAILED' } },
+    })
   })
 })
 
@@ -151,7 +195,7 @@ describe('Office snapshot', () => {
     const office = buildOfficeSnapshot(runtime, { tasks: { availability: 'available', data: [] }, fetchedAt: runtime.fetchedAt }, { sessions: { availability: 'available', data: [] }, fetchedAt: runtime.fetchedAt }, { now: runtime.fetchedAt })
 
     expect(office.stations).toMatchObject([
-      { name: 'default', room: 'Lounge', roomPosition: 'lounge-seat-1', state: 'Idle' },
+      { name: 'admin', room: 'Lounge', roomPosition: 'lounge-seat-1', state: 'Idle' },
       { name: 'coder', room: 'Lounge', roomPosition: 'lounge-seat-2', state: 'Idle' },
       { name: 'opencode', room: 'Lounge', roomPosition: 'lounge-seat-3', state: 'Idle' },
     ])
@@ -170,7 +214,7 @@ describe('Office snapshot', () => {
     }, { sessions: { availability: 'available', data: [] }, fetchedAt: '2026-09-27T12:00:00.000Z' }, { now: runtime.fetchedAt })
 
     expect(office.stations).toMatchObject([
-      { id: 'default', name: 'default', role: 'Hermes profile', room: 'Lounge', state: 'Idle', currentTask: 'No attributed task', recentActivity: 'No attributed recent activity' },
+      { id: 'default', name: 'admin', role: 'Hermes profile', room: 'Lounge', state: 'Idle', currentTask: 'No attributed task', recentActivity: 'No attributed recent activity' },
       { name: 'coder', room: 'Workspace', state: 'Reviewing', currentTask: 'Review the office', recentActivity: 'No attributed recent activity' },
       { name: 'opencode', room: 'Lounge', state: 'Idle', currentTask: 'No attributed task' },
     ])
@@ -187,7 +231,7 @@ describe('Office snapshot', () => {
   it('maps office states to rooms and keeps unknown agents in a labelled neutral workspace position', () => {
     const office = buildOfficeSnapshot(runtime, { tasks: { availability: 'available', data: [] }, fetchedAt: runtime.fetchedAt }, { sessions: { availability: 'available', data: [] }, fetchedAt: runtime.fetchedAt }, { now: runtime.fetchedAt })
     expect(office.stations).toMatchObject([
-      { name: 'default', room: 'Lounge', roomPosition: 'lounge-seat-1' },
+      { name: 'admin', room: 'Lounge', roomPosition: 'lounge-seat-1' },
       { name: 'coder', room: 'Lounge', roomPosition: 'lounge-seat-2' },
       { name: 'opencode', room: 'Lounge', roomPosition: 'lounge-seat-3' },
     ])
@@ -207,7 +251,7 @@ describe('Office snapshot', () => {
       fetchedAt: '2026-09-27T12:00:00.000Z',
     }, { sessions: { availability: 'unavailable', data: [], error: { code: 'COMMAND_FAILED', message: 'Read command was unavailable.' } }, fetchedAt: '2026-09-27T12:00:00.000Z' }, { now: runtime.fetchedAt })
 
-    expect(office.stations[0]).toMatchObject({ name: 'default', state: 'Working', currentTask: 'Active lead work', recentActivity: 'Not Available' })
+    expect(office.stations[0]).toMatchObject({ name: 'admin', state: 'Working', currentTask: 'Active lead work', recentActivity: 'Not Available' })
     expect(office.stations.some((station) => station.state === 'Offline')).toBe(false)
     expect(office.stations[2]).toMatchObject({ name: 'opencode', state: 'Unknown' })
   })
@@ -220,6 +264,40 @@ describe('Office snapshot', () => {
     }, { now: runtime.fetchedAt })
 
     expect(office.stations.map((station) => station.state)).toEqual(['Idle', 'Idle', 'Idle'])
+  })
+
+  it('lists every attributed open task per station, work-explaining ones first', () => {
+    const office = buildOfficeSnapshot(runtime, {
+      tasks: { availability: 'available', data: [
+        { title: 'Open backlog item', status: 'open', assignee: 'default' },
+        { title: 'Running now', status: 'running', assignee: 'default' },
+        { title: 'Finished work', status: 'done', assignee: 'default' },
+        { title: 'Unassigned running', status: 'running' },
+        { title: 'Coder review', status: 'review', assignee: 'coder' },
+      ] },
+      fetchedAt: runtime.fetchedAt,
+    }, { sessions: { availability: 'available', data: [] }, fetchedAt: runtime.fetchedAt }, { now: runtime.fetchedAt })
+
+    expect(office.stations[0].tasks.map((task) => task.title)).toEqual(['Running now', 'Open backlog item'])
+    expect(office.stations[1].tasks.map((task) => task.title)).toEqual(['Coder review'])
+    expect(office.stations[2].tasks).toEqual([])
+    // The headline task stays the first of the same list.
+    expect(office.stations[0].currentTask).toBe('Running now')
+  })
+
+  it('preserves the last-known-good roster when a runtime refresh fails', () => {
+    const failed = {
+      profiles: { availability: 'unavailable' as const, data: [], error: { code: 'TIMEOUT' as const, message: 'Read timed out.' } },
+      openCode: { availability: 'unavailable' as const, data: 'Unknown', error: { code: 'COMMAND_FAILED' as const, message: 'Read command was unavailable.' } },
+      fetchedAt: '2026-09-27T12:01:00.000Z',
+    }
+
+    expect(retainRuntimeRoster(runtime, failed)).toEqual({
+      ...failed,
+      profiles: runtime.profiles,
+      fetchedAt: runtime.fetchedAt,
+    })
+    expect(retainRuntimeRoster(undefined, failed)).toBe(failed)
   })
 
   it('uses a fresh explicit overlay before attributed work and expires it', () => {

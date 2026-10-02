@@ -6,7 +6,7 @@ import { excludedFor, FolderError, listFolder, publicAgent, readFolderFile, reso
 import { installAccess } from './access.js'
 import { API_VERSION } from './api-version.js'
 import { collectMemory } from './memory.js'
-import { getActivity, getCalendar, getChannels, getCommandLog, getDashboard, getKnowledge, getLogs, getOffice, getSnapshot, getTaskBoard, getTaskDetail } from './mission-control.js'
+import { getActivity, getCalendar, getChannels, getCommandLog, getDashboard, getKnowledge, getLogs, getOffice, getSnapshot, getTaskBoard, getTaskDetail, getTeam, submitTask, TaskRequestError } from './mission-control.js'
 
 const HOST = '127.0.0.1'
 // MISSION_CONTROL_PORT is the pre-rename name, still honoured.
@@ -40,6 +40,7 @@ const routes: Record<string, (now: number) => Promise<unknown> | unknown> = {
   '/api/office': getOffice,
   '/api/channels': getChannels,
   '/api/logs': getLogs,
+  '/api/team': getTeam,
   '/api/command-log': () => getCommandLog(),
 }
 for (const [path, handler] of Object.entries(routes)) {
@@ -48,6 +49,28 @@ for (const [path, handler] of Object.entries(routes)) {
     response.json(await handler(now))
   })
 }
+app.post('/api/tasks', (request: Request, response: Response, next: NextFunction) => {
+  express.json({ limit: '64kb' })(request, response, (error: unknown) => {
+    if (error) { response.status(400).json({ ok: false, error: 'Invalid JSON payload.' }); return }
+    next()
+  })
+}, async (request: Request, response: Response) => {
+  if (request.get('x-ruang-request') !== '1') {
+    response.status(403).json({ error: 'Forbidden: missing or invalid x-ruang-request header.' })
+    return
+  }
+  try {
+    const task = await submitTask(request.body)
+    response.status(201).json({ ok: true, task })
+  } catch (error) {
+    if (error instanceof TaskRequestError) {
+      response.status(error.status).json({ ok: false, error: error.message })
+      return
+    }
+    throw error
+  }
+})
+
 app.get('/api/tasks/:id', async (request, response) => {
   const board = typeof request.query.board === 'string' && request.query.board ? request.query.board : undefined
   const detail = await getTaskDetail(String(request.params.id), Date.now(), board)

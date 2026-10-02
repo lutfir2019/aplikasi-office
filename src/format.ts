@@ -44,7 +44,8 @@ export function formatBytes(bytes: number): string {
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
-/** Display name for an agent: its Hermes profile name as-is. */
+/** Display name for an agent: its Hermes profile name as-is, with 'default' aliased to 'admin'. */
 export function agentLabel(profile: string | undefined): string {
-  return profile ?? 'Hermes'
+  if (!profile) return 'Hermes'
+  return profile === 'default' ? 'admin' : profile
 }

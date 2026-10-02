@@ -4,7 +4,7 @@ import type { OfficeStation } from './types.ts'
 
 const station = (overrides: Partial<OfficeStation>): OfficeStation => ({
   id: 'default', name: 'default', role: 'Hermes profile', room: 'Workspace', roomPosition: 'assigned-desk',
-  state: 'Working', currentTask: '', recentActivity: '', activity: '', seat: 1, provenance: '', freshness: '', ...overrides,
+  state: 'Working', currentTask: '', tasks: [], recentActivity: '', activity: '', seat: 1, provenance: '', freshness: '', ...overrides,
 })
 
 describe('3D office placement', () => {

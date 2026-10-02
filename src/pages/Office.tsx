@@ -59,10 +59,112 @@ function officeStateLabel(station: OfficeStation): string {
   return station.state === 'Idle' ? 'Idle · managed placement' : station.state
 }
 
-type DetailTab = 'Overview' | 'Folder' | 'Memory'
-const DETAIL_TABS: DetailTab[] = ['Overview', 'Folder', 'Memory']
+/** Spoken form of the task list, so the visual list can stay aria-hidden inside a button. */
+function taskSummary(station: OfficeStation): string {
+  const tasks = station.tasks ?? []
+  if (tasks.length === 0) return ''
+  return ` ${tasks.length} task${tasks.length === 1 ? '' : 's'}: ${tasks.map((task) => `${task.title} (${task.status})`).join(', ')}.`
+}
 
-export function OfficeDetail({ station, onClose }: { station: OfficeStation; onClose: () => void }) {
+/**
+ * Every open task of one agent, stacked over its head. Spans, not a list: the office avatar is a
+ * button, and a button may only contain phrasing content.
+ */
+function StationTasks({ station }: { station: OfficeStation }) {
+  const tasks = station.tasks ?? []
+  if (tasks.length === 0) return null
+  return <span className="station-tasks" aria-hidden="true">{tasks.map((task) => <span key={task.id ?? task.title} className={`station-task status-${task.status.toLowerCase()}`}>{task.title}</span>)}</span>
+}
+
+type DetailTab = 'Overview' | 'Folder' | 'Memory' | 'Prompt'
+const DETAIL_TABS: { tab: DetailTab; label: string }[] = [
+  { tab: 'Overview', label: 'Overview' }, { tab: 'Folder', label: 'Folder' }, { tab: 'Memory', label: 'Memory' }, { tab: 'Prompt', label: 'Run Task' },
+]
+const PROMPT_LIMIT = 4000
+
+type PromptResult = { kind: 'success'; taskId: string; status: string } | { kind: 'error'; message: string }
+
+function friendlyError(status: number, body: unknown): string {
+  const message = typeof body === 'object' && body && 'error' in body && typeof (body as { error?: unknown }).error === 'string' ? (body as { error: string }).error : undefined
+  if (status === 400) return message ?? 'The task could not be validated.'
+  if (status === 401) return 'Ruang is locked. Enter the access code to dispatch tasks.'
+  if (status === 403) return 'Request rejected by the server. Refresh the page and try again.'
+  if (status === 500) return 'The server could not create the task. Check Logs for details.'
+  return message ?? `The server answered HTTP ${status}.`
+}
+
+/** The Run Task tab: dispatch a prompt to this station's profile via POST /api/tasks. */
+function PromptTab({ station, onDispatched }: { station: OfficeStation; onDispatched?: () => void }) {
+  const [prompt, setPrompt] = useState('')
+  const [submitting, setSubmitting] = useState(false)
+  const [result, setResult] = useState<PromptResult | null>(null)
+  const [overLimit, setOverLimit] = useState(false)
+  const submittingRef = useRef(false)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => { textareaRef.current?.focus() }, [])
+  useEffect(() => {
+    if (!result || result.kind !== 'success') return
+    const timer = setTimeout(() => setResult(null), 8_000)
+    return () => clearTimeout(timer)
+  }, [result])
+
+  const dispatch = async () => {
+    if (submittingRef.current || !prompt.trim() || prompt.length > PROMPT_LIMIT) return
+    submittingRef.current = true
+    setSubmitting(true)
+    setResult(null)
+    try {
+      const response = await fetch('/api/tasks', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-ruang-request': '1' }, body: JSON.stringify({ profile: station.id, prompt: prompt.trim() }) })
+      const body = await response.json().catch(() => undefined)
+      if (response.ok) {
+        setResult({ kind: 'success', taskId: body.task.id, status: body.task.status })
+        setPrompt('')
+        void fetch('/api/office?fresh=1')
+        void fetch('/api/tasks?fresh=1')
+        void fetch('/api/dashboard?fresh=1')
+        onDispatched?.()
+      } else {
+        setResult({ kind: 'error', message: friendlyError(response.status, body) })
+      }
+    } catch {
+      setResult({ kind: 'error', message: 'Could not reach the server. Check your connection.' })
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
+    }
+  }
+
+  const remaining = PROMPT_LIMIT - prompt.length
+  const counterTone = remaining < 50 ? 'counter-danger' : remaining < 200 ? 'counter-warn' : ''
+  return <section aria-busy={submitting}>
+    <div className="prompt-profile-badge" aria-label={`Dispatching to ${station.name}`}>
+      <PixelCharacter agent={station.id}/>
+      <span><strong>{station.name}</strong><small>{station.role}</small></span>
+      <span className={`badge ${officeStateBadge(station.state).tone}`}>{station.state}</span>
+    </div>
+    <textarea
+      ref={textareaRef}
+      className={`prompt-textarea${overLimit ? ' textarea-error' : ''}`}
+      value={prompt}
+      disabled={submitting}
+      placeholder="Describe the task…"
+      aria-label={`Task instruction for ${station.name}`}
+      aria-describedby="prompt-char-counter"
+      onChange={(event) => { setPrompt(event.target.value); setOverLimit(false) }}
+    />
+    <div className={`prompt-counter ${counterTone}`} id="prompt-char-counter">{prompt.length.toLocaleString()} / {PROMPT_LIMIT.toLocaleString()}</div>
+    <div className="prompt-actions">
+      <button type="button" className="primary-button" disabled={submitting || !prompt.trim() || prompt.length > PROMPT_LIMIT} aria-disabled={submitting || !prompt.trim() || prompt.length > PROMPT_LIMIT} aria-label={submitting ? 'Sending task, please wait' : undefined} onClick={() => { if (prompt.length > PROMPT_LIMIT) setOverLimit(true); else void dispatch() }}>
+        {submitting ? <><span className="prompt-spinner" aria-hidden="true"/>Sending…</> : 'Send Task ▶'}
+      </button>
+      <button type="button" className="ghost-button" disabled={submitting || !prompt} onClick={() => { setPrompt(''); setOverLimit(false); textareaRef.current?.focus() }}>Clear</button>
+    </div>
+    {result?.kind === 'success' && <div className="form-success" role="alert" aria-live="polite">Task dispatched · <code>{result.taskId}</code> <span className="badge neutral">{result.status}</span> <button type="button" className="prompt-link" onClick={() => window.open(`#/task-board/${result.taskId}`, '_self')}>View in Task Board ↗</button></div>}
+    {result?.kind === 'error' && <div className="form-error" role="alert" aria-live="assertive">{result.message} <button type="button" className="prompt-retry" onClick={() => void dispatch()}>Retry</button></div>}
+  </section>
+}
+
+export function OfficeDetail({ station, onClose, onDispatched }: { station: OfficeStation; onClose: () => void; onDispatched?: () => void }) {
   const closeRef = useRef<HTMLButtonElement>(null)
   const dialogRef = useRef<HTMLElement>(null)
   const [tab, setTab] = useState<DetailTab>('Overview')
@@ -83,15 +185,16 @@ export function OfficeDetail({ station, onClose }: { station: OfficeStation; onC
     }
   }
   return <div className="office-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose() }}>
-    <section className={`office-detail${tab === 'Overview' ? '' : ' wide'}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="office-detail-title" onKeyDown={onKeyDown}>
+    <section className={`office-detail${tab === 'Folder' || tab === 'Memory' ? ' wide' : ''}`} ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="office-detail-title" onKeyDown={onKeyDown}>
       <button className="office-close" ref={closeRef} onClick={onClose} aria-label={`Close ${station.name} details`}>Close</button>
       <div className="detail-head"><div className="detail-avatar"><PixelCharacter agent={station.id}/></div><div><p className="eyebrow">STATION DETAIL</p><h2 id="office-detail-title">{station.name}</h2><span className={`badge ${badge.tone}`}>{officeStateLabel(station)}</span></div></div>
-      {profile && <div className="detail-tabs" role="tablist" aria-label={`${station.name} details`}>{DETAIL_TABS.map((item) => <button type="button" role="tab" key={item} aria-selected={tab === item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{item}</button>)}</div>}
-      <div role="tabpanel" aria-label={tab} className="detail-body">
+      {profile && <div className="detail-tabs" role="tablist" aria-label={`${station.name} details`}>{DETAIL_TABS.map(({ tab: item, label }) => <button type="button" role="tab" key={item} aria-selected={tab === item} className={tab === item ? 'active' : ''} onClick={() => setTab(item)}>{label}</button>)}</div>}
+      <div role="tabpanel" aria-label={tab === 'Prompt' ? 'Run Task' : tab} aria-busy={tab === 'Prompt' ? undefined : false} className="detail-body">
         {tab === 'Overview' && <>{station.activity && <p className="detail-activity">{station.activity}</p>}
           <dl className="office-detail-grid"><div><dt>Agent type</dt><dd>{station.role}</dd></div><div><dt>Current room</dt><dd>{station.room} / {station.roomPosition}</dd></div><div><dt>Current task</dt><dd>{station.currentTask}</dd></div><div><dt>Recent activity</dt><dd>{station.recentActivity}</dd></div><div><dt>Source / provenance</dt><dd>{station.provenance}</dd></div><div><dt>Freshness</dt><dd>{station.freshness}</dd></div></dl></>}
         {tab === 'Folder' && profile && <AgentFolder profile={profile}/>}
         {tab === 'Memory' && profile && <AgentMemoryView profile={profile}/>}
+        {tab === 'Prompt' && profile && <PromptTab station={station} onDispatched={onDispatched}/>}
       </div>
     </section>
   </div>
@@ -119,11 +222,16 @@ interface HudItem { label: string; value: string; tone?: 'warn' | 'bad'; page?: 
 
 /** The few numbers worth seeing at a glance, over the office like a game HUD. */
 function hudItems(office: OfficeSnapshot | undefined, dashboard: DashboardSnapshot | null | undefined): HudItem[] {
-  const summary = office?.summary ?? dashboard?.office
+  // The dashboard's office summary is only a fallback while /api/office is still reading. Its
+  // counts come from the runtime read, so an unavailable runtime would report a truthful-looking
+  // 0/0 for a crew that is simply not read yet.
+  const summary = office?.summary ?? (dashboard?.runtime.profiles.availability === 'available' ? dashboard.office : undefined)
   const items: HudItem[] = []
   if (summary) {
     items.push({ label: 'Crew active', value: `${summary.active}/${summary.declared}`, title: `${summary.idle} idle · ${summary.offline} offline · ${summary.unknown} unknown` })
     items.push({ label: 'Gateways', value: `${summary.gatewaysReachable}/${summary.gatewaysDeclared}`, title: 'Profiles whose Hermes gateway is running (CLI-only agents need none)', page: 'Agents' })
+  } else {
+    items.push({ label: 'Crew active', value: 'Reading...', tone: 'warn', title: 'The office source has not answered yet' })
   }
   if (!dashboard) return items
   const { tasks, calendar, commands } = dashboard
@@ -175,7 +283,7 @@ export function Office({ dashboard, dashboardPending = false, onNavigate }: { da
   const hud = hudItems(office, dashboard)
   // Hot desking: one unlabeled desk per agent.
   const deskCount = office?.stations.length ?? 0
-  const stationButton2d = (station: OfficeStation) => { const badge = officeStateBadge(station.state); const busy = ['Working', 'Reviewing', 'Collaborating'].includes(station.state); return <button className={`pixel-station ${station.roomPosition} state-${station.state.toLowerCase()}`} key={station.id} onClick={(event) => { selectedTrigger.current = event.currentTarget; setSelectedName(station.name) }} aria-label={`${station.name}. ${officeStateLabel(station)}${station.activity ? `: ${station.activity}` : ''}. Open station details.`} title={station.activity || officeStateLabel(station)}>{busy && station.activity && <span className="speech" aria-hidden="true">{station.activity}</span>}<span className="pixel-station-name">{station.name}</span><span className={`badge ${badge.tone}`}>{officeStateLabel(station)}</span>{station.state === 'Unknown' && <span className="neutral-label">NEUTRAL PRESENCE</span>}<PixelCharacter agent={station.id}/></button> }
+  const stationButton2d = (station: OfficeStation) => { const badge = officeStateBadge(station.state); const busy = ['Working', 'Reviewing', 'Collaborating'].includes(station.state); return <button className={`pixel-station ${station.roomPosition} state-${station.state.toLowerCase()}`} key={station.id} onClick={(event) => { selectedTrigger.current = event.currentTarget; setSelectedName(station.name) }} aria-label={`${station.name}. ${officeStateLabel(station)}${station.activity ? `: ${station.activity}` : ''}.${taskSummary(station)} Open station details.`} title={station.activity || officeStateLabel(station)}><StationTasks station={station}/>{busy && station.activity && <span className="speech" aria-hidden="true">{station.activity}</span>}<span className="pixel-station-name">{station.name}</span><span className={`badge ${badge.tone}`}>{officeStateLabel(station)}</span>{station.state === 'Unknown' && <span className="neutral-label">NEUTRAL PRESENCE</span>}<PixelCharacter agent={station.id}/></button> }
   const stationButton = (station: OfficeStation) => { const badge = officeStateBadge(station.state); return <button type="button" className="crew-row" key={station.name} onClick={(event) => { selectedTrigger.current = event.currentTarget; setSelectedName(station.name) }} aria-label={`Details for ${station.name}: ${officeStateLabel(station)}`}><PixelCharacter agent={station.id}/><span><strong>{station.name}</strong><small>{station.activity || station.role}</small></span><span className={`badge ${badge.tone}`}>{station.state}</span></button> }
   return <section className={`office-stage view-${show3d ? '3d' : '2d'}`} aria-label="Visual Office">
     <div className="office-hud" role="list" aria-label="Key statistics">{hud.map((item) => { const body = <><span>{item.label}</span><b>{item.value}</b></>; return <div role="listitem" key={item.label}>{item.page && onNavigate ? <button type="button" className={`hud-chip${item.tone ? ` ${item.tone}` : ''}`} title={item.title ?? `Open ${item.page}`} onClick={() => onNavigate(item.page!)}>{body}</button> : <span className={`hud-chip${item.tone ? ` ${item.tone}` : ''}`} title={item.title}>{body}</span>}</div> })}</div>
@@ -214,12 +322,17 @@ export function Office({ dashboard, dashboardPending = false, onNavigate }: { da
         </>}
         {panel === 'Stats' && <Stats dashboard={dashboard ?? null} pending={dashboardPending} onNavigate={onNavigate}/>}
         {panel === 'Activity' && <>
+          <section className="office-feed"><p className="eyebrow">LIVE ACTIVITY</p>
+            <h2>Active tasks by profile</h2>
+            {office?.stations.filter((station) => (station.tasks ?? []).length > 0).map((station) => <article key={station.id}><strong>{station.name}</strong><span>{(station.tasks ?? []).map((task) => `${task.title} (${task.status})`).join(' · ')}</span></article>)}
+            {office && office.stations.every((station) => (station.tasks ?? []).length === 0) && <p>No attributed open tasks.</p>}
+          </section>
           <section className="office-feed"><p className="eyebrow">LIVE ACTIVITY</p><h2>Unattributed sessions</h2>{sessions?.availability === 'unavailable' ? <p>Not Available</p> : !sessions ? <p>Loading read-only metadata...</p> : sessions.data.length === 0 ? <p>No session metadata available.</p> : sessions.data.slice(0, 5).map((session) => <article key={session.id ?? session.title}><strong>{session.title}</strong><span>{session.lastActive}</span></article>)}<small>Generic session metadata never changes crew state.</small></section>
           <section className="office-feed"><p className="eyebrow">CHANNELS</p><h2>Messaging platforms</h2>{channelSource?.availability === 'unavailable' ? <p>Not Available</p> : !channelSource ? <p>Loading safe status...</p> : channelSource.data.length === 0 ? <p>No configured channels.</p> : channelSource.data.map((channel) => <article key={channel.name}><strong>{channel.name}</strong><span>{channel.status}</span></article>)}{channels?.activeSessions !== undefined && <small>{channels.activeSessions} active session{channels.activeSessions === 1 ? '' : 's'}</small>}</section>
         </>}
       </div>
     </aside>}
     {overlay && <OfficeOverlay kind={overlay} onClose={() => setOverlay(undefined)} onNavigate={onNavigate}/>}
-    {selected && <OfficeDetail station={selected} onClose={closeDetail}/>}
+    {selected && <OfficeDetail station={selected} onClose={closeDetail} onDispatched={() => { snapshot.refresh(); activitySnapshot.refresh() }}/>}
   </section>
 }
